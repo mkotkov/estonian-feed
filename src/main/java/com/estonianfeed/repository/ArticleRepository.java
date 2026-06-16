@@ -12,4 +12,5 @@ public interface ArticleRepository extends JpaRepository<Article, Long> {
     boolean existsByUrl(String url);
 
     List<Article> findBySentFalseOrderByPublishedAtDesc();
+    List<Article> findByNotifiedFalseOrderByPublishedAtDesc();
 }

@@ -17,11 +17,21 @@ public class Article {
     @Column(nullable = false, unique = true)
     private String url;
 
+    @Column(columnDefinition = "TEXT")
+    private String description;
+
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
+
     private String source;
 
     private LocalDateTime publishedAt;
 
     private boolean sent = false;
+    private boolean notified = false;
+
+    public boolean isNotified() { return notified; }
+    public void setNotified(boolean notified) { this.notified = notified; }
 
     // Constructurs 
     public Article() {}

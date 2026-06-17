@@ -1,28 +1,27 @@
-package com.estonianfeed.bot;
+package com.estonianfeed.newsbot;
 
-import java.util.List;
-import java.util.Map;
-import java.util.ArrayList;
-
-
-
+import com.estonianfeed.repository.ArticleRepository;
+import com.estonianfeed.repository.JobRepository;
+import com.estonianfeed.repository.UserSubscriptionRepository;
+import com.estonianfeed.model.UserSubscription;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
 import org.telegram.telegrambots.meta.api.objects.Update;
-import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
+import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
-import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
+import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
-import com.estonianfeed.model.UserSubscription;
-import com.estonianfeed.repository.ArticleRepository;
-import com.estonianfeed.repository.JobRepository;
-import com.estonianfeed.repository.UserSubscriptionRepository;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
+// Решта класу залишається як є — тільки назва класу
 @Component
-public class EstonianFeedBot extends TelegramLongPollingBot {
+public class NewsFeedBot extends TelegramLongPollingBot {
 
     @Value("${telegram.bot.username}")
     private String botUsername;
@@ -31,7 +30,7 @@ public class EstonianFeedBot extends TelegramLongPollingBot {
     private final UserSubscriptionRepository subscriptionRepository;
     private final Map<Long, String> userStates = new java.util.concurrent.ConcurrentHashMap<>();
 
-    public EstonianFeedBot(
+    public NewsFeedBot(
             @Value("${telegram.bot.token}") String botToken,
             ArticleRepository articleRepository,
             JobRepository jobRepository,
@@ -176,7 +175,7 @@ public class EstonianFeedBot extends TelegramLongPollingBot {
     }
 
     private void showUnsubscribeMenu(long chatId) {
-        var subs = subscriptionRepository.findByChatId(chatId);
+        List<UserSubscription> subs = subscriptionRepository.findByChatId(chatId);
         if (subs.isEmpty()) {
             sendReply(chatId, "У тебе немає підписок.\nДодай через /subscribe");
             return;

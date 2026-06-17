@@ -34,3 +34,5 @@ build/
 
 ### VS Code ###
 .vscode/
+news-bot/src/main/resources/application.properties
+jobs-bot/src/main/resources/application.properties

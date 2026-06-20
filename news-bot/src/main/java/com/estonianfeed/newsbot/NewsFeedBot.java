@@ -1,27 +1,32 @@
 package com.estonianfeed.newsbot;
 
-import com.estonianfeed.repository.ArticleRepository;
-import com.estonianfeed.repository.JobRepository;
-import com.estonianfeed.repository.UserSubscriptionRepository;
-import com.estonianfeed.model.UserSubscription;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
-import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
-import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
+import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
-import org.springframework.scheduling.annotation.Scheduled;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.time.LocalDateTime;
-import java.util.HashMap;
 import com.estonianfeed.model.Article;
+import com.estonianfeed.model.UserSourcePreference;
+import com.estonianfeed.model.UserSubscription;
+import com.estonianfeed.repository.ArticleRepository;
+import com.estonianfeed.repository.JobRepository;
+import com.estonianfeed.repository.SourceRepository;
+import com.estonianfeed.repository.UserSourcePreferenceRepository;
+import com.estonianfeed.repository.UserSubscriptionRepository;
+import com.estonianfeed.model.Source;
+
 
 @Component
 public class NewsFeedBot extends TelegramLongPollingBot {
@@ -31,15 +36,21 @@ public class NewsFeedBot extends TelegramLongPollingBot {
     private final ArticleRepository articleRepository;
     private final UserSubscriptionRepository subscriptionRepository;
     private final Map<Long, String> userStates = new java.util.concurrent.ConcurrentHashMap<>();
+    private final SourceRepository sourceRepository;
+    private final UserSourcePreferenceRepository sourcePreferenceRepository;
 
     public NewsFeedBot(
             @Value("${telegram.bot.token}") String botToken,
             ArticleRepository articleRepository,
             JobRepository jobRepository,
-            UserSubscriptionRepository subscriptionRepository) {
+            UserSubscriptionRepository subscriptionRepository,
+            SourceRepository sourceRepository,
+            UserSourcePreferenceRepository sourcePreferenceRepository) {
         super(botToken);
         this.articleRepository = articleRepository;
         this.subscriptionRepository = subscriptionRepository;
+        this.sourceRepository = sourceRepository;
+        this.sourcePreferenceRepository = sourcePreferenceRepository;
     }
 
     @Override
@@ -73,10 +84,12 @@ public class NewsFeedBot extends TelegramLongPollingBot {
                 "Привіт! Я Estonian Feed Bot 🇪🇪\n\n" +
                 "Команди:\n" +
                 "/news — останні новини\n" +
+                "/sources — обрати джерела новин\n" +
                 "/subscribe — підписатись на ключове слово\n" +
                 "/unsubscribe — відписатись\n" +
                 "/subscriptions — мої підписки");
             case "/news" -> sendNews(chatId);
+            case "/sources" -> showSourcesMenu(chatId);
             case "/subscribe" -> askForKeyword(chatId);
             case "/unsubscribe" -> showUnsubscribeMenu(chatId);
             case "/subscriptions" -> handleListSubscriptions(chatId);
@@ -99,9 +112,10 @@ public class NewsFeedBot extends TelegramLongPollingBot {
     }
 
     private void sendNews(long chatId) {
-        var articles = articleRepository.findBySentFalseOrderByPublishedAtDesc();
+        List<String> allowedSources = getAllowedSourceIds(chatId);
+        var articles = articleRepository.findBySentFalseAndSourceIdInOrderByPublishedAtDesc(allowedSources);
         if (articles.isEmpty()) {
-            sendReply(chatId, "Поки немає нових новин. Спробуй пізніше.");
+            sendReply(chatId, "Поки немає нових новин з обраних джерел. Спробуй пізніше.");
             return;
         }
         articles.stream().limit(5).forEach(article -> {
@@ -241,20 +255,42 @@ public class NewsFeedBot extends TelegramLongPollingBot {
         if (data.startsWith("unsub:")) {
             String keyword = data.substring("unsub:".length());
             subscriptionRepository.deleteByChatIdAndKeyword(chatId, keyword);
-
-            // Відповідаємо на callback щоб кнопка не "зависла"
-            try {
-                org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery answer =
-                    new org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery();
-                answer.setCallbackQueryId(callback.getId());
-                answer.setText("Відписався від «" + keyword + "»");
-                execute(answer);
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-
-            // Оновлюємо меню — показуємо актуальний список
+            answerCallback(callback, "Відписався від «" + keyword + "»");
             showUnsubscribeMenu(chatId);
+
+        } else if (data.startsWith("srctoggle:")) {
+            String sourceId = data.substring("srctoggle:".length());
+            toggleSource(chatId, sourceId);
+            answerCallback(callback, "Оновлено");
+            showSourcesMenu(chatId, callback.getMessage().getMessageId());
+
+        } else if (data.equals("srcreset")) {
+            sourcePreferenceRepository.deleteByChatId(chatId);
+            answerCallback(callback, "Повернуто до всіх джерел");
+            showSourcesMenu(chatId, callback.getMessage().getMessageId());
+
+        } else if (data.equals("srcdone")) {
+            answerCallback(callback, "Збережено");
+        }
+    }
+
+    private void answerCallback(CallbackQuery callback, String text) {
+        try {
+            org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery answer =
+                new org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery();
+            answer.setCallbackQueryId(callback.getId());
+            answer.setText(text);
+            execute(answer);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void toggleSource(long chatId, String sourceId) {
+        if (sourcePreferenceRepository.existsByChatIdAndSourceId(chatId, sourceId)) {
+            sourcePreferenceRepository.deleteByChatIdAndSourceId(chatId, sourceId);
+        } else {
+            sourcePreferenceRepository.save(new UserSourcePreference(chatId, sourceId));
         }
     }
 
@@ -269,5 +305,82 @@ public class NewsFeedBot extends TelegramLongPollingBot {
             // Якщо Markdown не спрацював — надсилаємо без форматування
             sendReply(chatId, text);
         }
+    }
+
+    private void showSourcesMenu(long chatId) {
+        List<Source> allSources = sourceRepository.findAll();
+        List<UserSourcePreference> userPrefs = sourcePreferenceRepository.findByChatId(chatId);
+        java.util.Set<String> selectedIds = new java.util.HashSet<>();
+        userPrefs.forEach(p -> selectedIds.add(p.getSourceId()));
+
+        boolean hasCustomSelection = !userPrefs.isEmpty();
+
+        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
+        for (Source source : allSources) {
+            boolean isSelected = hasCustomSelection
+                ? selectedIds.contains(source.getId())
+                : true; // дефолт: всі джерела позначені
+
+            String emoji = isSelected ? "✅" : "⬜";
+            InlineKeyboardButton btn = new InlineKeyboardButton();
+            btn.setText(emoji + " " + source.getName() + " (" + source.getLanguage() + ")");
+            btn.setCallbackData("srctoggle:" + source.getId());
+            rows.add(List.of(btn));
+        }
+
+        InlineKeyboardButton resetBtn = new InlineKeyboardButton();
+        resetBtn.setText("🔄 Скинути (всі джерела)");
+        resetBtn.setCallbackData("srcreset");
+        rows.add(List.of(resetBtn));
+
+        InlineKeyboardButton doneBtn = new InlineKeyboardButton();
+        doneBtn.setText("✅ Готово");
+        doneBtn.setCallbackData("srcdone");
+        rows.add(List.of(doneBtn));
+
+        InlineKeyboardMarkup keyboard = new InlineKeyboardMarkup();
+        keyboard.setKeyboard(rows);
+
+        String statusText = hasCustomSelection
+            ? "Обрані джерела (натисни щоб змінити):"
+            : "Зараз отримуєш новини з усіх джерел.\nНатисни щоб обрати конкретні:";
+
+        SendMessage message = new SendMessage();
+        message.setChatId(chatId);
+        message.setText(statusText);
+        message.setReplyMarkup(keyboard);
+
+        try {
+            execute(message);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void showSourcesMenu(long chatId, Integer messageId) {
+        // Видаляємо старе повідомлення і показуємо нове — простіше ніж editMessage з клавіатурою
+        try {
+            org.telegram.telegrambots.meta.api.methods.updatingmessages.DeleteMessage delete =
+                new org.telegram.telegrambots.meta.api.methods.updatingmessages.DeleteMessage();
+            delete.setChatId(chatId);
+            delete.setMessageId(messageId);
+            execute(delete);
+        } catch (Exception e) {
+            // якщо не вдалось видалити — нічого, просто покажемо нове повідомлення
+        }
+        showSourcesMenu(chatId);
+    }
+
+    private List<String> getAllowedSourceIds(long chatId) {
+        var userPrefs = sourcePreferenceRepository.findByChatId(chatId);
+        if (userPrefs.isEmpty()) {
+            // Дефолт — всі джерела
+            return sourceRepository.findAll().stream()
+                .map(Source::getId)
+                .toList();
+        }
+        return userPrefs.stream()
+            .map(UserSourcePreference::getSourceId)
+            .toList();
     }
 }

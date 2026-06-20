@@ -25,6 +25,12 @@ public class Article {
 
     private String source;
 
+    @Column(name = "source_id")
+    private String sourceId;
+    
+    public String getSourceId() { return sourceId; }
+    public void setSourceId(String sourceId) { this.sourceId = sourceId; }
+
     private LocalDateTime publishedAt;
 
     private boolean sent = false;

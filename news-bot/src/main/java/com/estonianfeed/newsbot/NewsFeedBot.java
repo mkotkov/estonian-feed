@@ -14,19 +14,21 @@ import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
+import org.springframework.scheduling.annotation.Scheduled;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.time.LocalDateTime;
+import java.util.HashMap;
+import com.estonianfeed.model.Article;
 
-// Решта класу залишається як є — тільки назва класу
 @Component
 public class NewsFeedBot extends TelegramLongPollingBot {
 
     @Value("${telegram.bot.username}")
     private String botUsername;
     private final ArticleRepository articleRepository;
-    private final JobRepository jobRepository;
     private final UserSubscriptionRepository subscriptionRepository;
     private final Map<Long, String> userStates = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -37,7 +39,6 @@ public class NewsFeedBot extends TelegramLongPollingBot {
             UserSubscriptionRepository subscriptionRepository) {
         super(botToken);
         this.articleRepository = articleRepository;
-        this.jobRepository = jobRepository;
         this.subscriptionRepository = subscriptionRepository;
     }
 
@@ -72,12 +73,10 @@ public class NewsFeedBot extends TelegramLongPollingBot {
                 "Привіт! Я Estonian Feed Bot 🇪🇪\n\n" +
                 "Команди:\n" +
                 "/news — останні новини\n" +
-                "/jobs — останні вакансії\n" +
                 "/subscribe — підписатись на ключове слово\n" +
                 "/unsubscribe — відписатись\n" +
                 "/subscriptions — мої підписки");
             case "/news" -> sendNews(chatId);
-            case "/jobs" -> sendJobs(chatId);
             case "/subscribe" -> askForKeyword(chatId);
             case "/unsubscribe" -> showUnsubscribeMenu(chatId);
             case "/subscriptions" -> handleListSubscriptions(chatId);
@@ -115,33 +114,19 @@ public class NewsFeedBot extends TelegramLongPollingBot {
         });
     }
 
-    private void sendJobs(long chatId) {
-        var jobs = jobRepository.findBySentFalseOrderByPublishedAtDesc();
-        if (jobs.isEmpty()) {
-            sendReply(chatId, "Поки немає нових вакансій.");
+    private void handleSubscribe(long chatId, String keyword) {
+        if (keyword.isEmpty()) {
+            sendReply(chatId, "Вкажи ключове слово. Наприклад: /subscribe narva");
             return;
         }
-        jobs.stream().limit(5).forEach(job -> {
-            String msg = "💼 " + job.getTitle() + "\n" + job.getUrl();
-            sendReply(chatId, msg);
-            job.setSent(true);
-            jobRepository.save(job);
-        });
-    }
-
-    private void handleSubscribe(long chatId, String keyword) {
-    if (keyword.isEmpty()) {
-        sendReply(chatId, "Вкажи ключове слово. Наприклад: /subscribe narva");
-        return;
-    }
-    keyword = keyword.toLowerCase();
-    if (subscriptionRepository.existsByChatIdAndKeyword(chatId, keyword)) {
-        sendReply(chatId, "Ти вже підписаний на «" + keyword + "»");
-        return;
-    }
-    subscriptionRepository.save(new UserSubscription(chatId, keyword));
-    sendReply(chatId, "✅ Підписався на «" + keyword + "»\nБудеш отримувати новини з цим словом.");
-    }
+        keyword = keyword.toLowerCase();
+        if (subscriptionRepository.existsByChatIdAndKeyword(chatId, keyword)) {
+            sendReply(chatId, "Ти вже підписаний на «" + keyword + "»");
+            return;
+        }
+        subscriptionRepository.save(new UserSubscription(chatId, keyword));
+        sendReply(chatId, "✅ Підписався на «" + keyword + "»\nБудеш отримувати новини з цим словом.");
+        }
 
     @org.springframework.transaction.annotation.Transactional
     private void handleUnsubscribe(long chatId, String keyword) {
@@ -167,6 +152,50 @@ public class NewsFeedBot extends TelegramLongPollingBot {
 
     public void sendNotification(long chatId, String text) {
         sendReply(chatId, text);
+    }
+    
+    @Scheduled(fixedDelay = 300000)
+    public void notifySubscribers() {
+        LocalDateTime since = LocalDateTime.now().minusHours(24);
+        List<Article> freshArticles =
+            articleRepository.findByNotifiedFalseAndPublishedAtAfterOrderByPublishedAtDesc(since);
+
+        if (freshArticles.isEmpty()) return;
+
+        var allSubscriptions = subscriptionRepository.findAll();
+        if (!allSubscriptions.isEmpty()) {
+            Map<Long, List<String>> subsByChatId = new HashMap<>();
+            for (var sub : allSubscriptions) {
+                subsByChatId
+                    .computeIfAbsent(sub.getChatId(), k -> new ArrayList<>())
+                    .add(sub.getKeyword());
+            }
+
+            for (var entry : subsByChatId.entrySet()) {
+                long chatId = entry.getKey();
+                List<String> keywords = entry.getValue();
+
+                for (var article : freshArticles) {
+                    String titleLower = article.getTitle().toLowerCase();
+                    String descLower = article.getDescription() != null
+                        ? article.getDescription().toLowerCase() : "";
+
+                    boolean matches = keywords.stream()
+                        .anyMatch(kw -> titleLower.contains(kw) || descLower.contains(kw));
+
+                    if (matches) {
+                        String msg = "🔔 Новина за твоєю підпискою:\n\n" +
+                            "📰 " + article.getTitle() + "\n" +
+                            article.getUrl();
+                        sendNotification(chatId, msg);
+                    }
+                }
+            }
+        }
+
+        // Позначаємо як сповіщені — незалежно чи знайшли підписку
+        freshArticles.forEach(a -> a.setNotified(true));
+        articleRepository.saveAll(freshArticles);
     }
 
     private void askForKeyword(long chatId) {

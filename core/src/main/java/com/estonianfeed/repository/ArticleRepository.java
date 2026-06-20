@@ -1,10 +1,13 @@
 package com.estonianfeed.repository;
 
-import com.estonianfeed.model.Article;
+import java.time.LocalDateTime;
+import java.util.List;
+
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
-import java.util.List;
+import com.estonianfeed.model.Article;
+
 
 @Repository
 public interface ArticleRepository extends JpaRepository<Article, Long> {
@@ -13,4 +16,5 @@ public interface ArticleRepository extends JpaRepository<Article, Long> {
 
     List<Article> findBySentFalseOrderByPublishedAtDesc();
     List<Article> findByNotifiedFalseOrderByPublishedAtDesc();
+    List<Article> findByNotifiedFalseAndPublishedAtAfterOrderByPublishedAtDesc(LocalDateTime after);
 }

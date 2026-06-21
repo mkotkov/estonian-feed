@@ -1,14 +1,18 @@
 package com.estonianfeed.newsbot;
 
+// JAVA IMPORTS
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+// SPRING FRAMEWORK IMPORTS
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+
+// TELEGRAM IMPORTS
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
@@ -17,16 +21,22 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMa
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
+// MODELS
 import com.estonianfeed.model.Article;
 import com.estonianfeed.model.UserSourcePreference;
 import com.estonianfeed.model.UserSubscription;
+import com.estonianfeed.model.Source;
+import com.estonianfeed.model.UserLanguagePreference;
+
+// REPOSITORY
 import com.estonianfeed.repository.ArticleRepository;
-import com.estonianfeed.repository.JobRepository;
 import com.estonianfeed.repository.SourceRepository;
 import com.estonianfeed.repository.UserSourcePreferenceRepository;
 import com.estonianfeed.repository.UserSubscriptionRepository;
-import com.estonianfeed.model.Source;
+import com.estonianfeed.repository.UserLanguagePreferenceRepository;
 
+//SERVICE
+import com.estonianfeed.service.Messages;
 
 @Component
 public class NewsFeedBot extends TelegramLongPollingBot {
@@ -38,19 +48,21 @@ public class NewsFeedBot extends TelegramLongPollingBot {
     private final Map<Long, String> userStates = new java.util.concurrent.ConcurrentHashMap<>();
     private final SourceRepository sourceRepository;
     private final UserSourcePreferenceRepository sourcePreferenceRepository;
+    private final UserLanguagePreferenceRepository languagePreferenceRepository;
 
     public NewsFeedBot(
             @Value("${telegram.bot.token}") String botToken,
             ArticleRepository articleRepository,
-            JobRepository jobRepository,
             UserSubscriptionRepository subscriptionRepository,
             SourceRepository sourceRepository,
-            UserSourcePreferenceRepository sourcePreferenceRepository) {
+            UserSourcePreferenceRepository sourcePreferenceRepository,
+            UserLanguagePreferenceRepository languagePreferenceRepository) {
         super(botToken);
         this.articleRepository = articleRepository;
         this.subscriptionRepository = subscriptionRepository;
         this.sourceRepository = sourceRepository;
         this.sourcePreferenceRepository = sourcePreferenceRepository;
+        this.languagePreferenceRepository = languagePreferenceRepository;
     }
 
     @Override
@@ -80,22 +92,16 @@ public class NewsFeedBot extends TelegramLongPollingBot {
         }
 
         switch (text) {
-            case "/start" -> sendReply(chatId,
-                "Привіт! Я Estonian Feed Bot 🇪🇪\n\n" +
-                "Команди:\n" +
-                "/news — останні новини\n" +
-                "/sources — обрати джерела новин\n" +
-                "/subscribe — підписатись на ключове слово\n" +
-                "/unsubscribe — відписатись\n" +
-                "/subscriptions — мої підписки");
+            case "/start" -> sendReply(chatId, Messages.get("welcome", getUserLanguage(chatId)));
             case "/news" -> sendNews(chatId);
             case "/sources" -> showSourcesMenu(chatId);
             case "/subscribe" -> askForKeyword(chatId);
             case "/unsubscribe" -> showUnsubscribeMenu(chatId);
             case "/subscriptions" -> handleListSubscriptions(chatId);
+            case "/language" -> showLanguageMenu(chatId);
             default -> {
                 userStates.remove(chatId);
-                sendReply(chatId, "Невідома команда. Спробуй /start");
+                sendReply(chatId, Messages.get("unknown_command", getUserLanguage(chatId)));
             }
         }
     }
@@ -114,8 +120,8 @@ public class NewsFeedBot extends TelegramLongPollingBot {
     private void sendNews(long chatId) {
         List<String> allowedSources = getAllowedSourceIds(chatId);
         var articles = articleRepository.findBySentFalseAndSourceIdInOrderByPublishedAtDesc(allowedSources);
-        if (articles.isEmpty()) {
-            sendReply(chatId, "Поки немає нових новин з обраних джерел. Спробуй пізніше.");
+       if (articles.isEmpty()) {
+            sendReply(chatId, Messages.get("no_news", getUserLanguage(chatId)));
             return;
         }
         articles.stream().limit(5).forEach(article -> {
@@ -262,15 +268,30 @@ public class NewsFeedBot extends TelegramLongPollingBot {
             String sourceId = data.substring("srctoggle:".length());
             toggleSource(chatId, sourceId);
             answerCallback(callback, "Оновлено");
-            showSourcesMenu(chatId, callback.getMessage().getMessageId());
+            deleteOldSourcesMenu(callback);
+            showSourcesMenu(chatId);
 
         } else if (data.equals("srcreset")) {
             sourcePreferenceRepository.deleteByChatId(chatId);
             answerCallback(callback, "Повернуто до всіх джерел");
-            showSourcesMenu(chatId, callback.getMessage().getMessageId());
+            deleteOldSourcesMenu(callback);
+            showSourcesMenu(chatId);
 
         } else if (data.equals("srcdone")) {
             answerCallback(callback, "Збережено");
+        } else if (data.startsWith("lang:")) {
+            String lang = data.substring("lang:".length());
+            setUserLanguage(chatId, lang);
+            answerCallback(callback, "Language set to " + lang);
+            sendReply(chatId, getLanguageConfirmation(lang));
+        } else if (data.startsWith("srclang:")) {
+            String lang = data.substring("srclang:".length());
+            deleteOldSourcesMenu(callback);
+            if ("ALL".equals(lang)) {
+                showSourcesMenu(chatId, (String) null);
+            } else {
+                showSourcesMenu(chatId, lang);
+            }
         }
     }
 
@@ -308,7 +329,17 @@ public class NewsFeedBot extends TelegramLongPollingBot {
     }
 
     private void showSourcesMenu(long chatId) {
+        showSourcesMenu(chatId, null);
+    }
+
+    private void showSourcesMenu(long chatId, String languageFilter) {
         List<Source> allSources = sourceRepository.findAll();
+        if (languageFilter != null) {
+            allSources = allSources.stream()
+                .filter(s -> s.getLanguage().equals(languageFilter))
+                .toList();
+        }
+
         List<UserSourcePreference> userPrefs = sourcePreferenceRepository.findByChatId(chatId);
         java.util.Set<String> selectedIds = new java.util.HashSet<>();
         userPrefs.forEach(p -> selectedIds.add(p.getSourceId()));
@@ -316,10 +347,30 @@ public class NewsFeedBot extends TelegramLongPollingBot {
         boolean hasCustomSelection = !userPrefs.isEmpty();
 
         List<List<InlineKeyboardButton>> rows = new ArrayList<>();
+
+        // Кнопки фільтра мови — нагорі меню
+        InlineKeyboardButton allBtn = new InlineKeyboardButton();
+        allBtn.setText(languageFilter == null ? "🔘 Всі мови" : "⚪ Всі мови");
+        allBtn.setCallbackData("srclang:ALL");
+
+        InlineKeyboardButton etBtn = new InlineKeyboardButton();
+        etBtn.setText("ET".equals(languageFilter) ? "🔘 ET" : "⚪ ET");
+        etBtn.setCallbackData("srclang:ET");
+
+        InlineKeyboardButton ruBtn = new InlineKeyboardButton();
+        ruBtn.setText("RU".equals(languageFilter) ? "🔘 RU" : "⚪ RU");
+        ruBtn.setCallbackData("srclang:RU");
+
+        InlineKeyboardButton enBtn = new InlineKeyboardButton();
+        enBtn.setText("EN".equals(languageFilter) ? "🔘 EN" : "⚪ EN");
+        enBtn.setCallbackData("srclang:EN");
+
+        rows.add(List.of(allBtn, etBtn, ruBtn, enBtn));
+
         for (Source source : allSources) {
             boolean isSelected = hasCustomSelection
                 ? selectedIds.contains(source.getId())
-                : true; // дефолт: всі джерела позначені
+                : true;
 
             String emoji = isSelected ? "✅" : "⬜";
             InlineKeyboardButton btn = new InlineKeyboardButton();
@@ -356,21 +407,7 @@ public class NewsFeedBot extends TelegramLongPollingBot {
             e.printStackTrace();
         }
     }
-
-    private void showSourcesMenu(long chatId, Integer messageId) {
-        // Видаляємо старе повідомлення і показуємо нове — простіше ніж editMessage з клавіатурою
-        try {
-            org.telegram.telegrambots.meta.api.methods.updatingmessages.DeleteMessage delete =
-                new org.telegram.telegrambots.meta.api.methods.updatingmessages.DeleteMessage();
-            delete.setChatId(chatId);
-            delete.setMessageId(messageId);
-            execute(delete);
-        } catch (Exception e) {
-            // якщо не вдалось видалити — нічого, просто покажемо нове повідомлення
-        }
-        showSourcesMenu(chatId);
-    }
-
+    
     private List<String> getAllowedSourceIds(long chatId) {
         var userPrefs = sourcePreferenceRepository.findByChatId(chatId);
         if (userPrefs.isEmpty()) {
@@ -382,5 +419,77 @@ public class NewsFeedBot extends TelegramLongPollingBot {
         return userPrefs.stream()
             .map(UserSourcePreference::getSourceId)
             .toList();
+    }
+
+    private void showLanguageMenu(long chatId) {
+        InlineKeyboardButton et = new InlineKeyboardButton();
+        et.setText("🇪🇪 Eesti");
+        et.setCallbackData("lang:ET");
+
+        InlineKeyboardButton ru = new InlineKeyboardButton();
+        ru.setText("русский");
+        ru.setCallbackData("lang:RU");
+
+        InlineKeyboardButton en = new InlineKeyboardButton();
+        en.setText("🇬🇧 English");
+        en.setCallbackData("lang:EN");
+
+        InlineKeyboardButton uk = new InlineKeyboardButton();
+        uk.setText("🇺🇦 Українська");
+        uk.setCallbackData("lang:UK");
+
+        InlineKeyboardMarkup keyboard = new InlineKeyboardMarkup();
+        keyboard.setKeyboard(List.of(
+            List.of(et, ru),
+            List.of(en, uk)
+        ));
+
+        SendMessage message = new SendMessage();
+        message.setChatId(chatId);
+        message.setText("Choose your language / Виберіть мову / Виберіть мову:");
+        message.setReplyMarkup(keyboard);
+
+        try {
+            execute(message);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void deleteOldSourcesMenu(CallbackQuery callback) {
+        try {
+            org.telegram.telegrambots.meta.api.methods.updatingmessages.DeleteMessage delete =
+                new org.telegram.telegrambots.meta.api.methods.updatingmessages.DeleteMessage();
+            delete.setChatId(callback.getMessage().getChatId());
+            delete.setMessageId(callback.getMessage().getMessageId());
+            execute(delete);
+        } catch (Exception e) {
+            // нічого, просто покажемо нове повідомлення
+        }
+    }
+
+    private String getUserLanguage(long chatId) {
+        return languagePreferenceRepository.findByChatId(chatId)
+            .map(UserLanguagePreference::getLanguage)
+            .orElse("EN");
+    }
+
+    private void setUserLanguage(long chatId, String lang) {
+        var existing = languagePreferenceRepository.findByChatId(chatId);
+        if (existing.isPresent()) {
+            existing.get().setLanguage(lang);
+            languagePreferenceRepository.save(existing.get());
+        } else {
+            languagePreferenceRepository.save(new UserLanguagePreference(chatId, lang));
+        }
+    }
+
+    private String getLanguageConfirmation(String lang) {
+        return switch (lang) {
+            case "ET" -> "✅ Keel on seatud eesti keelele.";
+            case "RU" -> "✅ Язык установлен на русский.";
+            case "UK" -> "✅ Мову встановлено на українську.";
+            default -> "✅ Language set to English.";
+        };
     }
 }

@@ -21,7 +21,8 @@ Built with Java 17 + Spring Boot as a Maven multi-module project.
 
 - 📰 `/news` — latest news from selected sources
 - 💼 `/jobs` — latest job postings
-- 🌐 `/sources` — choose which sources to follow, or get all by default
+- 🌐 `/sources` — choose which sources to follow, filterable by language, or get all by default
+- 🗣️ `/language` — bot interface language: Estonian, Russian, English, or Ukrainian
 - 🔔 `/subscribe` — get notified when a keyword appears in fresh news (last 24h)
 - 🔕 `/unsubscribe` — remove a subscription
 - 📋 `/subscriptions` — list your subscriptions
@@ -55,10 +56,10 @@ Built with Java 17 + Spring Boot as a Maven multi-module project.
 
 ## Architecture
 ```
-estonian-feed/
-├── core/          # Shared: models, repositories, FetcherService
-├── news-bot/      # News bot + ERR, Postimees, Gazeta sources
-└── jobs-bot/      # Jobs bot + Äripäev source
+   estonian-feed/
+   ├── core/          # Shared: models, repositories, FetcherService, Messages (i18n)
+   ├── news-bot/      # News bot + ERR, Postimees, Gazeta sources
+   └── jobs-bot/      # Jobs bot + Äripäev source
 ```
 
 Each module has its own PostgreSQL database and Telegram bot token.
@@ -144,6 +145,8 @@ spring.datasource.password=your_password
 - [x] PostgreSQL for persistent storage
 - [x] Maven multi-module architecture
 - [x] Per-user source selection (`/sources`)
-- [ ] Language selection (ET / EN / RU)
+- [x] Multi-language interface (ET / RU / EN / UK)
+- [ ] Subscriptions respect source/language preferences
+- [ ] Fix jobs-bot data fetching
 - [ ] Auto-publish to Telegram channels
 - [ ] Docker + VPS deployment

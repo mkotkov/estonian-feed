@@ -307,6 +307,7 @@ public class NewsFeedBot extends TelegramLongPollingBot {
         }
     }
 
+    
     private void toggleSource(long chatId, String sourceId) {
         if (sourcePreferenceRepository.existsByChatIdAndSourceId(chatId, sourceId)) {
             sourcePreferenceRepository.deleteByChatIdAndSourceId(chatId, sourceId);

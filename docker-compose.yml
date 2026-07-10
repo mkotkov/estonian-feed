@@ -1,0 +1,44 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: estonianfeed
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U estonianfeed"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  news-bot:
+    build: ./news-bot
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/newsdb
+      SPRING_DATASOURCE_USERNAME: estonianfeed
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
+      TELEGRAM_BOT_TOKEN: ${NEWS_BOT_TOKEN}
+      TELEGRAM_BOT_USERNAME: ${NEWS_BOT_USERNAME}
+      TELEGRAM_CHANNEL_ID: ${NEWS_CHANNEL_ID}
+
+  # jobs-bot:
+  #   build: ./jobs-bot
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   environment:
+  #     SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/jobsdb
+  #     SPRING_DATASOURCE_USERNAME: estonianfeed
+  #     SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
+  #     TELEGRAM_BOT_TOKEN: ${JOBS_BOT_TOKEN}
+  #     TELEGRAM_BOT_USERNAME: ${JOBS_BOT_USERNAME}
+  #     TELEGRAM_CHANNEL_ID: ${JOBS_CHANNEL_ID}
+  #     SERVER_PORT: 8081
+
+volumes:
+  postgres_data:

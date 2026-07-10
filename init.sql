@@ -1,0 +1,2 @@
+CREATE DATABASE newsdb;
+-- CREATE DATABASE jobsdb;

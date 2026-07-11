@@ -23,7 +23,8 @@ import com.rometools.rome.feed.synd.SyndFeed;
 import com.rometools.rome.io.SyndFeedInput;
 import com.rometools.rome.io.XmlReader;
 
-import jakarta.annotation.PostConstruct;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 
 @Service
 public class FetcherService {
@@ -140,7 +141,7 @@ public class FetcherService {
         return LocalDateTime.now();
     }
 
-    @PostConstruct
+    @EventListener(ApplicationReadyEvent.class)
     public void initSources() {
         saveSourceIfMissing("err", "ERR News (ET)", NEWS_FEEDS.get("err"), "ET");
         saveSourceIfMissing("err_news", "ERR News (EN)", NEWS_FEEDS.get("err_news"), "EN");
